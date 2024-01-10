@@ -23,7 +23,7 @@ class GhRunner:
 
     def _list_json_fields(self):
         return ",".join(
-            ["author", "number", "state", "title", "url", "reviewDecision",
+            ["author", "number", "headRefName", "state", "title", "url", "reviewDecision",
                 "statusCheckRollup", "mergeable", "mergeStateStatus"])
 
     @cache

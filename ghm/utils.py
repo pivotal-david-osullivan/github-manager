@@ -2,8 +2,8 @@ import os
 import json
 from .runner import GhRunner
 
-REPO_CONFIG_LOCATION = os.path.expanduser('~/.ghm/repos.json')
-
+REPO_CONFIG_OSS = os.path.expanduser('~/.ghm/repos.json')
+REPO_CONFIG_TZ = os.path.expanduser('~/.ghm/repos-tanzu.json')
 
 def fetch_buildpack_toml(repo):
     import urllib.request
@@ -25,14 +25,18 @@ def check_requirements():
         return False
 
 
-def load_repos(remote_repos=False, org=None):
+def load_repos(remote_repos=False, org=None, repo_src='OSS'):
     """Loads a JSON formatted list of repositories to be used by the script"""
     if remote_repos:
         repos = GhRunner().list_repos(org=org)
         return [repo['full_name'] for repo in repos
                 if 'full_name' in repo.keys()]
     else:
-        repos = json.load(open(REPO_CONFIG_LOCATION))
+        if repo_src == 'OSS':
+           repos = json.load(open(REPO_CONFIG_OSS))
+        elif repo_src == 'TZ' :
+           repos = json.load(open(REPO_CONFIG_TZ))
+
         if not hasattr(repos, "append") or not hasattr(repos, "__len__"):
             raise TypeError("Invalid configuration file")
         return repos

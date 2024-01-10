@@ -9,7 +9,7 @@ import time
 import os
 from prettytable import PrettyTable
 from .runner import GhRunner, GitRunner
-from .utils import load_repos, REPO_CONFIG_LOCATION, fetch_buildpack_toml
+from .utils import load_repos, REPO_CONFIG_OSS, REPO_CONFIG_TZ, fetch_buildpack_toml
 from .cache import Cache
 
 NOT_RUNNABLE = "could not create workflow dispatch event: HTTP 422:" \
@@ -49,8 +49,12 @@ def filter_repos(repos, repo, filter=None):
 
 
 def handle_repos_local(args):
-    print(f"Repos configured in [{REPO_CONFIG_LOCATION}]")
-    print("\t" + "\n\t".join(load_repos()))
+    src = args.repo_src
+    if src is None:
+      src = 'OSS'
+      
+    print(f"Repos configured in [{REPO_CONFIG_OSS}]")
+    print("\t" + "\n\t".join(load_repos(repo_src=src)))
 
 
 def handle_repos_remote(args):
@@ -67,14 +71,15 @@ def handle_repos_remote(args):
 
 def handle_pr_list(args):
     runner = GhRunner()
-    repos = filter_repos(load_repos(), args.repo, args.repo_filter)
-    cols = "{:<45} {:^6} {:^10} {:^15} {:^10} {:^18} {:^10} {:^20} {}"
+    repos = filter_repos(load_repos(repo_src=args.repo_src), args.repo, args.repo_filter)
+    cols = "{:<45} {:^6} {:^10} {:^15} {:^10} {:^50} {:^18} {:^10} {:^20} {}"
     print(cols.format(
         "REPO",
         "NUMBER",
         "STATE",
         "MERGE?",
         "MERGST",
+        "BRANCH",
         "REVIEW",
         "CHECK?",
         "AUTHOR",
@@ -93,6 +98,7 @@ def handle_pr_list(args):
                 pr['state'],
                 pr['mergeable'],
                 pr['mergeStateStatus'],
+                pr['headRefName'],
                 pr['reviewDecision'],
                 pr_actions_ok(pr),
                 pr.get('author', {}).get('login', 'n/a'),
@@ -102,7 +108,7 @@ def handle_pr_list(args):
 
 def handle_pr_approve(args):
     runner = GhRunner()
-    repos = filter_repos(load_repos(), args.repo, args.repo_filter)
+    repos = filter_repos(load_repos(repo_src=args.repo_src), args.repo, args.repo_filter)
     for repo in repos:
         prs = runner.pr_list(repo,
                              filter=args.filter,
@@ -259,7 +265,7 @@ def handle_action_run(args):
 def handle_action_run_matching(args):
     runner = GhRunner()
     num_run = 0
-    repos = filter_repos(load_repos(), args.repo, args.repo_filter)
+    repos = filter_repos(load_repos(repo_src=args.repo_src), args.repo, args.repo_filter)
     for repo in repos:
         num_run += _run_workflow(runner, repo, args.filter,
                                  args.batch_size, args.batch_pause)
@@ -302,7 +308,7 @@ def handle_action_rerun_matching(args):
 
 def handle_action_enable_matching(args):
     runner = GhRunner()
-    repos = filter_repos(load_repos(), args.repo, args.repo_filter)
+    repos = filter_repos(load_repos(repo_src=args.repo_src), args.repo, args.repo_filter)
     pattern = re.compile(args.filter is None and '.*' or args.filter)
 
     for repo in repos:
@@ -350,7 +356,7 @@ def handle_action_disable_matching(args):
 
 def handle_action_run_active_list(args):
     runner = GhRunner()
-    repos = filter_repos(load_repos(args.all_repos),
+    repos = filter_repos(load_repos(repo_src=args.repo_src),
                          args.repo, args.repo_filter)
 
     pt = PrettyTable()
@@ -383,7 +389,7 @@ def handle_action_run_active_list(args):
 
 def handle_action_run_complete_list(args):
     runner = GhRunner()
-    repos = filter_repos(load_repos(args.all_repos),
+    repos = filter_repos(load_repos(repo_src=args.repo_src),
                          args.repo, args.repo_filter)
     data = []
     for repo in repos:
@@ -428,7 +434,7 @@ def handle_action_run_complete_list(args):
 
 def handle_pr_merge(args):
     runner = GhRunner()
-    repos = filter_repos(load_repos(), args.repo, args.repo_filter)
+    repos = filter_repos(load_repos(repo_src=args.repo_src), args.repo, args.repo_filter)
     break_merging = False
     for repo in repos:
         if break_merging:
@@ -630,6 +636,7 @@ def label_valid(label):
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Manage many Github repos in an efficient way")
+    parser.add_argument("--repo-src", help="choose file to use as repo source")
 
     subparsers = parser.add_subparsers()
 
