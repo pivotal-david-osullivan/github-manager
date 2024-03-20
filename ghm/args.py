@@ -7,6 +7,7 @@ import timeago
 import datetime
 import time
 import os
+import pyjq
 from prettytable import PrettyTable
 from .runner import GhRunner, GitRunner
 from .utils import load_repos, REPO_CONFIG_OSS, REPO_CONFIG_TZ, fetch_buildpack_toml
@@ -476,7 +477,7 @@ def handle_pr_merge(args):
 
 def handle_pr_branch_update(args):
     runner = GhRunner()
-    repos = filter_repos(load_repos(), args.repo, args.repo_filter)
+    repos = filter_repos(load_repos(repo_src=args.repo_src), args.repo, args.repo_filter)
     for repo in repos:
         prs = runner.pr_list(repo, args.filter, args.merge_state, args.author)
         for pr in prs:
@@ -500,7 +501,7 @@ def handle_release_list(args):
             for group in order['group']:
                 repos.append(group['id'])
     else:
-        repos = load_repos()
+        repos = load_repos(repo_src=args.repo_src)
 
     repos = filter_repos(repos, args.repo, filter=args.filter)
 
@@ -550,6 +551,28 @@ def handle_release_list(args):
         sorted_table.extend(sorted(table, key=lambda row: row[-2]))
         pt.add_rows(sorted_table)
         print(pt)
+    elif args.latest_main:
+         pt = PrettyTable()
+         pt.field_names = ["REPO", "MAIN RELEASES", "PUBLISHED - CREATED"]
+         pt.align["REPO"] = 'l'
+         table = []
+         for repo in repos:
+            r = runner.fetch_repo_releases(repo)
+            if not r:
+                table.append([repo, 'None', 'n/a'])
+                continue
+            jqs = pyjq.all('group_by(.target_commitish) | map(select(.[0].target_commitish == "main") | {target_commitish: .[0].target_commitish, releases: sort_by(.created_at) | map({tag_name, created_at, published_at})})', r)
+            for rel in jqs[0]:
+              for r in rel['releases']:
+                  if not r:
+                      continue
+                  if r['published_at'] is None:
+                      r['published_at'] = "Draft"
+                  dates = "\n".join([r['published_at'], r['created_at']]) 
+                  table.append([repo, r['tag_name'], dates])
+         pt.add_rows(table)
+         pt.sortby = "REPO"
+         print(pt)
     else:
         for repo in repos:
             r = runner.fetch_draft_release(repo)
@@ -581,7 +604,7 @@ def handle_release_publish(args):
             for group in order['group']:
                 repos.append(group['id'])
     else:
-        repos = load_repos()
+        repos = load_repos(repo_src=args.repo_src)
 
     repos = filter_repos(repos, args.repo, filter=args.filter)
 
@@ -590,7 +613,7 @@ def handle_release_publish(args):
         print()
 
     for repo in repos:
-        r = runner.fetch_draft_release(repo)
+        r = runner.fetch_draft_release_main(repo)
         if not r:
             print(f"    ** Skipping repo {repo}, no release found")
             continue
@@ -885,6 +908,9 @@ def parse_args():
     list_parser.add_argument(
         "--summary", nargs='?', const=True, default=False,
         help="Show latest release for repo (summary only)")
+    list_parser.add_argument(
+        "--latest-main", nargs='?', const=True, default=False,
+        help="Show latest non-draft release on main for repo")
     list_parser.add_argument("--repo", help="a specific repo to release")
     list_parser.add_argument('--filter', help="regex to refine repos")
 

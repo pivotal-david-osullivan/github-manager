@@ -205,6 +205,31 @@ class GhRunner:
             if release['draft']:
                 return release
 
+    @cache
+    def fetch_draft_release_main(self, repo):
+        """Fetch the draft release of a repo"""
+        cmd = ["gh", "api", f"/repos/{repo}/releases"]
+        res = subprocess.run(cmd, capture_output=True, check=True)
+        for release in json.loads(res.stdout):
+            if release['draft'] and release['target_commitish'] == 'main':
+                return release
+
+    @cache
+    def fetch_latest_non_draft_release(self, repo):
+        """Fetch the draft release of a repo"""
+        cmd = ["gh", "api", f"/repos/{repo}/releases/latest"]
+        res = subprocess.run(cmd, capture_output=True, check=False)
+        if res.returncode == 0:
+                return json.loads(res.stdout)
+
+    @cache
+    def fetch_repo_releases(self, repo):
+        """Fetch the releases of a repo"""
+        cmd = ["gh", "api", f"/repos/{repo}/releases"]
+        res = subprocess.run(cmd, capture_output=True, check=False)
+        if res.returncode == 0:
+                return json.loads(res.stdout)
+
     def fetch_latest_release(self, repo):
         """Fetch the latest 2 releases of a repo"""
         cmd = ["gh", "release", "list", "-R", repo, "-L", "2"]
