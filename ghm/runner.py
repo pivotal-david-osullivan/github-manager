@@ -87,6 +87,12 @@ class GhRunner:
         cmd = ["gh", "pr", "view", "-R", repo, str(number), "-w"]
         subprocess.run(cmd, capture_output=True, check=True)
 
+    def pr_close(self, repo, number):
+        """Close the PR"""
+        cmd = ["gh", "pr", "close", "-R", repo, str(number)]
+        res = subprocess.run(cmd, capture_output=True, check=True)
+        return (res.stdout, res.stderr)
+
     @invalidate
     def pr_create(self, repo_path, labels):
         """Create a PR"""
@@ -213,6 +219,44 @@ class GhRunner:
         for release in json.loads(res.stdout):
             if release['draft'] and release['target_commitish'] == 'main':
                 return release
+    
+    @cache
+    def fetch_draft_release_for_cleanup(self, repo, base):
+        """Fetch the draft release of a repo"""
+        cmd = ["gh", "api", f"/repos/{repo}/releases"]
+        drafts_dict = {}
+        drafts_for_cleanup = []
+        res = subprocess.run(cmd, capture_output=True, check=True)
+        releases = json.loads(res.stdout)
+        if len(releases) == 0:
+            return drafts_dict
+        for release in releases:
+            commitish = release['target_commitish']
+            if release['draft'] and commitish.endswith(base) and "DIGEST PLACEHOLDER" in release['body']:
+                 if commitish not in drafts_dict:
+                     drafts_dict[commitish] = 1
+                 elif drafts_dict[commitish] == 1:
+                     drafts_for_cleanup.append(release)
+                     continue
+                 else: print(f"else {drafts_dict[commitish]}")
+        return drafts_for_cleanup
+    
+    @cache
+    def fetch_draft_releases_for_publish(self, repo, base):
+        """Fetch the draft releases of a repo"""
+        cmd = ["gh", "api", f"/repos/{repo}/releases"]
+        drafts_for_publish, commitish_list = [], []
+        res = subprocess.run(cmd, capture_output=True, check=True)
+        releases = json.loads(res.stdout)
+        if len(releases) == 0:
+            return drafts_for_publish
+        for release in releases:
+            commitish = release['target_commitish']
+            if release['draft'] and commitish.endswith(base) and "DIGEST PLACEHOLDER" in release['body']:
+                 if commitish not in commitish_list:
+                     drafts_for_publish.append(release)
+                     commitish_list.append(commitish)
+        return drafts_for_publish
 
     @cache
     def fetch_latest_non_draft_release(self, repo):
@@ -244,6 +288,13 @@ class GhRunner:
                "-X", "PATCH", "-F", "draft=false", "-F", f"tag_name=v{tag}"]
         res = subprocess.run(cmd, capture_output=True, check=True)
         return json.loads(res.stdout)
+    
+    def delete_release(self, repo, id):
+        """Delete a release from a repo"""
+        cmd = ["gh", "api", f"/repos/{repo}/releases/{id}",
+               "-X", "DELETE"]
+        res = subprocess.run(cmd, capture_output=True, check=True)
+        print(f' Deleted release {id} for repo {repo} \n {res.stderr}')
 
     def list_repos(self, org=None):
         """List all the repos in the org"""

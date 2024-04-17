@@ -3,12 +3,12 @@ import hashlib
 import json
 import re
 import subprocess
-import timeago
+import timeago # type: ignore
 import datetime
 import time
 import os
-import pyjq
-from prettytable import PrettyTable
+import pyjq # type: ignore
+from prettytable import PrettyTable # type: ignore
 from .runner import GhRunner, GitRunner
 from .utils import load_repos, REPO_CONFIG_OSS, REPO_CONFIG_TZ, fetch_buildpack_toml
 from .cache import Cache
@@ -124,6 +124,21 @@ def handle_pr_approve(args):
             if stderr:
                 print(stderr)
 
+def handle_pr_close(args):
+    runner = GhRunner()
+    repos = filter_repos(load_repos(repo_src=args.repo_src), args.repo, args.repo_filter)
+    for repo in repos:
+        prs = runner.pr_list(repo,
+                             filter=args.filter)
+        for pr in prs:
+            print(f"  Closing {repo} -> {pr['number']} [{pr['title']}]")
+            stdout, stderr = runner.pr_close(repo, pr['number'])
+            if stdout:
+                resp = str(stdout, encoding='UTF-8')
+                print(resp)
+            if stderr:
+                resp = str(stderr, encoding='UTF-8')
+                print(resp)
 
 def handle_open(args):
     GhRunner().pr_open(args.repo, args.number)
@@ -490,6 +505,32 @@ def handle_pr_branch_update(args):
                     print("Unexpected response:")
                     print(f"    {resp}")
 
+def handle_release_cleanup(args):
+    runner = GhRunner()
+    repos = []
+    repos = load_repos(repo_src=args.repo_src)
+    repos = filter_repos(repos, args.repo)
+
+    base = 'main'
+    if args.base == 'lines':
+        base = '.x'
+    pt = PrettyTable()
+    pt.field_names = ["REPO", "# OF DRAFTS", "COMMITISH"]
+    pt.align["REPO"] = 'l'
+    # separate list for drafts as these aren't sortable by date
+    table = []
+    for repo in repos:
+        releases = runner.fetch_draft_release_for_cleanup(repo, base)
+        count = len(releases)
+        ids = []
+        for rel in releases:
+            ids.append(rel['id'])
+            if not args.summary:
+              runner.delete_release(repo, rel['id'])
+        table.append([repo, count, ids])
+    if args.summary:
+        pt.add_rows(table)
+        print(pt)
 
 def handle_release_list(args):
     runner = GhRunner()
@@ -595,6 +636,9 @@ def handle_release_list(args):
 
 
 def handle_release_publish(args):
+    if args.base:
+        handle_release_publish_base(args)
+        return
     runner = GhRunner()
 
     repos = []
@@ -623,6 +667,41 @@ def handle_release_publish(args):
         if args.publish:
             runner.release_publish(repo, r['id'], version)
 
+
+def handle_release_publish_base(args):
+    runner = GhRunner()
+
+    repos = []
+    repos = load_repos(repo_src=args.repo_src)
+
+    repos = filter_repos(repos, args.repo, filter=args.filter)
+    base = 'main'
+
+    if not args.publish:
+        print("**DRY RUN** - add the `--publish` flag to actually publish")
+        print()
+    
+    if args.base == 'lines':
+        base = '.x'
+
+    num_run = 0
+    for repo in repos:
+        publish_candidates = runner.fetch_draft_releases_for_publish(repo, base)
+        if len(publish_candidates) == 0:
+            print(f"    ** Skipping repo {repo}, no release found")
+            continue
+        num_run += 1
+        for r in publish_candidates:
+            name = " ".join(r['name'].strip().split()[:-1])
+            version = r['name'].strip().split()[-1:][0]
+            print(f"    Publishing release for {repo} -> [{name}/{version} - Commitish: {r['target_commitish']} ]")
+            if args.publish:
+                runner.release_publish(repo, r['id'], version)
+        if args.batch_size is not None and num_run % args.batch_size == 0:
+           print("    *** Batch Submitted - Pausing ***")
+           time.sleep(args.batch_pause)
+           num_run = 0       
+                    
 
 def clear_cache(args):
     Cache().clear()
@@ -714,6 +793,12 @@ def parse_args():
     list_parser.add_argument('--repo-filter', help="filter on repo name")
     list_parser.add_argument('--author', help="filter on author")
     list_parser.set_defaults(func=handle_pr_list)
+
+    close_parser = subparser_pr.add_parser("close", help="close open PRs")
+    close_parser.add_argument("--filter", help="keyword or Github filter")
+    close_parser.add_argument('--repo', help="repo name")
+    close_parser.add_argument('--repo-filter', help="filter on repo name")
+    close_parser.set_defaults(func=handle_pr_close)    
 
     approve_parser = subparser_pr.add_parser(
         "approve", help="approve matching PRs")
@@ -916,6 +1001,20 @@ def parse_args():
 
     list_parser.set_defaults(func=handle_release_list)
 
+    cleanup_parser = subparser_release.add_parser(
+        "cleanup-drafts", help="clean up multiple draft releases")
+    cleanup_parser.add_argument(
+        "--summary", nargs='?', const=True, default=False,
+        help="Show drafts to clean up")
+    cleanup_parser.add_argument(
+        "--base", help="Release's target base branch for cleanup (commitish)",
+        choices=['main', 'lines'],
+        default="main")
+    cleanup_parser.add_argument("--repo", help="a specific repo to release")
+
+    cleanup_parser.set_defaults(func=handle_release_cleanup)
+
+
     publish_parser = subparser_release.add_parser(
         "publish", help="publish a release")
     publish_parser.add_argument(
@@ -927,6 +1026,14 @@ def parse_args():
         '--publish',
         help="defaults to a dry-run, this flag actually publishes",
         action=argparse.BooleanOptionalAction)
+    publish_parser.add_argument(
+        '--batch-size', help="Size of batch to process before pausing",
+        type=int, required=False)
+    publish_parser.add_argument(
+        '--batch-pause',
+        help="Amount of time in seconds to pause between batches",
+        type=float, required=False)
+    publish_parser.add_argument("--base", help="Target/Base branch to publish releases for",choices=['main', 'lines'], required=True)
     publish_parser.set_defaults(func=handle_release_publish)
 
     return parser
